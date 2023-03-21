@@ -4,16 +4,18 @@ import android.annotation.SuppressLint
 import android.os.Bundle
 import android.util.Log
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.DividerItemDecoration
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.codepath.articlesearch.databinding.ActivityMainBinding
 import com.codepath.asynchttpclient.AsyncHttpClient
 import com.codepath.asynchttpclient.callback.JsonHttpResponseHandler
+import kotlinx.coroutines.Dispatchers.IO
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import okhttp3.Headers
 import org.json.JSONException
-import com.codepath.articlesearch.BuildConfig
 
 fun createJson() = Json {
     isLenient = true
@@ -27,12 +29,28 @@ private val ARTICLE_SEARCH_URL =
     "https://api.nytimes.com/svc/search/v2/articlesearch.json?api-key=${SEARCH_API_KEY}"
 
 class MainActivity : AppCompatActivity() {
-    private val articles = mutableListOf<Article>()
+    private val articles = mutableListOf<DisplayArticle>()
     private lateinit var articlesRecyclerView: RecyclerView
     private lateinit var binding: ActivityMainBinding
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        lifecycleScope.launch {
+            (application as ArticleApplication).db.articleDao().getAll().collect { databaseList ->
+                databaseList.map { entity ->
+                    DisplayArticle(
+                        entity.headline,
+                        entity.articleAbstract,
+                        entity.byline,
+                        entity.mediaImageUrl
+                    )
+                }.also { mappedList ->
+                    articles.clear()
+                    articles.addAll(mappedList)
+                    ArticleAdapter.notifyDataSetChanged()
+                }
+            }
+        }
 
         binding = ActivityMainBinding.inflate(layoutInflater)
         val view = binding.root
@@ -72,11 +90,19 @@ class MainActivity : AppCompatActivity() {
                     )
 
                     // TODO: Do something with the returned json (contains article information)
-                    parsedJson.response?.docs?.let { list ->
-                        articles.addAll(list)
-
-                        // TODO: Save the articles and reload the screen
-                        articleAdapter.notifyDataSetChanged()
+                    parsedJson.response?.docs?.let {
+                        lifecycleScope.launch(IO) {
+                            (application as ArticleApplication).db.articleDao().deleteAll()
+                            (application as ArticleApplication).db.articleDao().insertAll(articles.map{
+                                ArticleEntity(
+                                    headline = it.headline?.main,
+                                    articleAbstract = it.abstract.toString(),
+                                    byline = it.byline?.original,
+                                    mediaImageUrl = it.mediaImageUrl.toString()
+                                )
+                            })
+                        }
+                        ArticleAdapter.notifyDataSetChanged()
                     }
 
                 } catch (e: JSONException) {
@@ -87,4 +113,8 @@ class MainActivity : AppCompatActivity() {
         })
 
     }
+}
+
+private fun ArticleAdapter.Companion.notifyDataSetChanged() {
+    TODO("Not yet implemented")
 }
